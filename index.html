@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Recharge App</title>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-router-dom@6.4.3/dist/umd/react-router-dom.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.20.6/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/antd@5.0.0/dist/antd.min.js"></script>
+  <script type="text/babel">
+    // Assurez-vous que les chemins correspondent à votre structure de projet
+    // Ici, nous supposons que App.jsx, RechargeCheck.jsx et ResultPage.jsx sont accessibles
+    // Dans un environnement de production, vous utiliseriez un bundler comme Vite ou Webpack
+    // Pour cet exemple, nous utilisons Babel pour la transpilation dans le navigateur
+
+    // Importer les composants (dans un environnement réel, utilisez des imports ES Modules)
+    const App = window.ReactDOM.createRoot(document.getElementById('root')).render(
+      <React.StrictMode>
+        <App />
+      </React.StrictMode>
+    );
+  </script>
+</body>
+</html>
