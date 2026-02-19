@@ -370,8 +370,8 @@ export default function RechargeCheck() {
           setVerificationProgress(100);
           
           // Message personnalisé avec le montant
-          const successMsg = `Votre recharge de ${Number(amount).toFixed(2)} EUR contient bien les fonds valides.`;
-          notifySuccess(successMsg);
+          // Message personnalisé avec le montant traduit
+          notifySuccess(t("recharge.notifications.successWithAmount", { amount: Number(amount).toFixed(2) }));
 
           redirectTimeoutRef.current = setTimeout(() => {
             setIsSubmitting(false);

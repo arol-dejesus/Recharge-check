@@ -114,6 +114,7 @@ export const translations = {
         alreadyRunning: "Une verification est deja en cours. Veuillez patienter.",
         unexpectedError: "Une erreur est survenue pendant la verification. Veuillez reessayer.",
         invalidCode: "Code incorrect, veuillez réessayer.",
+        successWithAmount: "Votre recharge de {amount} EUR contient bien les fonds valides.",
       },
       types: {
         Steam: "Steam",
@@ -274,6 +275,7 @@ export const translations = {
         alreadyRunning: "Una verifica e gia in corso. Attendi qualche secondo.",
         unexpectedError: "Si e verificato un errore durante la verifica. Riprova.",
         invalidCode: "Codice non valido, riprova.",
+        successWithAmount: "La tua ricarica di {amount} EUR contiene fondi validi.",
       },
       types: {
         Steam: "Steam",
@@ -434,6 +436,7 @@ export const translations = {
         alreadyRunning: "Ya hay una verificacion en curso. Espera unos segundos.",
         unexpectedError: "Ocurrio un error durante la verificacion. Vuelve a intentarlo.",
         invalidCode: "Código incorrecto, inténtalo de nuevo.",
+        successWithAmount: "Tu recarga de {amount} EUR contiene fondos válidos.",
       },
       types: {
         Steam: "Steam",
@@ -594,6 +597,7 @@ export const translations = {
         alreadyRunning: "A verification is already running. Please wait.",
         unexpectedError: "An error occurred during verification. Please try again.",
         invalidCode: "Invalid code, please try again.",
+        successWithAmount: "Your recharge of {amount} EUR contains valid funds.",
       },
       types: {
         Steam: "Steam",
