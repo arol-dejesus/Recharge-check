@@ -36,8 +36,7 @@ $recipient    = "aroldejesus@gmail.com";
 // Ajoutez votre domaine Netlify ici après déploiement
 $allowedOrigins = [
     "http://localhost:3000",
-    "https://votre-site.netlify.app",  // ← Remplacez par votre vrai domaine Netlify
-    // "https://votre-domaine.com",    // ← Si vous avez un domaine personnalisé
+    "https://recharge-check.netlify.app",
 ];
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';

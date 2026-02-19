@@ -1,15 +1,27 @@
-# .htaccess pour le backend PHP sur Hostinger
-# Ce fichier va dans le dossier où vous uploadez le backend
-
 # Activer le moteur de réécriture
 RewriteEngine On
+
+# ─── CORS : autoriser Netlify à communiquer avec le backend ───
+<IfModule mod_headers.c>
+    # Autoriser le domaine Netlify
+    SetEnvIf Origin "https://recharge-check\.netlify\.app$" CORS_ORIGIN=$0
+    SetEnvIf Origin "http://localhost:3000$" CORS_ORIGIN=$0
+
+    Header always set Access-Control-Allow-Origin "%{CORS_ORIGIN}e" env=CORS_ORIGIN
+    Header always set Access-Control-Allow-Methods "POST, OPTIONS"
+    Header always set Access-Control-Allow-Headers "Content-Type"
+</IfModule>
+
+# Répondre OK aux requêtes OPTIONS (preflight CORS)
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^(.*)$ $1 [R=200,L]
 
 # Sécuriser les fichiers sensibles
 <FilesMatch "\.(log|json|lock)$">
     Deny from all
 </FilesMatch>
 
-# Protéger le dossier vendor
+# Protéger vendor et logs
 <IfModule mod_rewrite.c>
     RewriteRule ^vendor/ - [F,L]
     RewriteRule ^logs/ - [F,L]

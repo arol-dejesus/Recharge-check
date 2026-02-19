@@ -16,15 +16,36 @@
   box-sizing: border-box;
 }
 
+html,
 body {
   margin: 0;
-  font-family: "Manrope", "Segoe UI", sans-serif;
-  color: var(--rc-ink);
-  background: var(--rc-surface);
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  font-family: "Outfit", sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden; /* Empêche le scroll horizontal */
+  position: relative; /* Stabilise le layout */
+  -webkit-text-size-adjust: 100%; /* Empêche le changement de taille de texte auto */
+  overscroll-behavior-x: none; /* Empêche l'effet élastique horizontal */
+}
+
+/* Empêcher le zoom intempestif sur iOS lors du focus des inputs */
+@media screen and (max-width: 768px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
 }
 
 #root {
-  min-height: 100vh;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
 }
 
 .rc-shell {

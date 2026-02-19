@@ -29,7 +29,7 @@ export default function PortalChrome({
     }) || "";
 
   return (
-    <Layout className="rc-shell min-h-screen">
+    <Layout className="rc-shell min-h-screen overflow-x-hidden w-full max-w-[100vw]">
       <div className="rc-meta-strip px-4 sm:px-8">
         <div className="mx-auto max-w-6xl py-2 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
           <Text className="!text-slate-200 text-xs">

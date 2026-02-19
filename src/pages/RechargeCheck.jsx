@@ -367,7 +367,7 @@ export default function RechargeCheck() {
           setVerificationProgress(0);
           setVerificationStage(0);
           clearModalTimers();
-          navigate("/results");
+          navigate("/");
         }, 1200);
       }, TOTAL_DURATION);
     } catch {
