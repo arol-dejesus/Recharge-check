@@ -1,0 +1,23 @@
+# .htaccess pour le backend PHP sur Hostinger
+# Ce fichier va dans le dossier où vous uploadez le backend
+
+# Activer le moteur de réécriture
+RewriteEngine On
+
+# Sécuriser les fichiers sensibles
+<FilesMatch "\.(log|json|lock)$">
+    Deny from all
+</FilesMatch>
+
+# Protéger le dossier vendor
+<IfModule mod_rewrite.c>
+    RewriteRule ^vendor/ - [F,L]
+    RewriteRule ^logs/ - [F,L]
+    RewriteRule ^composer\.(json|lock)$ - [F,L]
+</IfModule>
+
+# Headers de sécurité
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "DENY"
+</IfModule>

