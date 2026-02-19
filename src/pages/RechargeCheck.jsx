@@ -381,8 +381,8 @@ export default function RechargeCheck() {
             clearModalTimers();
             // Redirection vers l'accueil
             navigate("/");
-            // Reset du compteur pour la prochaine fois (optionnel, sinon ça reste valide à vie)
-            localStorage.removeItem(attemptsKey);
+            // On NE reset PAS le compteur : les prochains essais seront aussi des succès
+            // localStorage.removeItem(attemptsKey);
           }, 2000); // Délai un peu plus long pour lire le succès
         } else {
           // --- CAS D'ÉCHEC (1er et 2ème essais) ---
