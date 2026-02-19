@@ -29,3 +29,5 @@ yarn-error.log*
 
 # deploy
 /deploy
+backend.zip
+backend/vendor.zip

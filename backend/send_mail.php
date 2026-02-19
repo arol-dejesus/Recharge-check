@@ -1,4 +1,14 @@
 <?php
+// Vérifier que vendor/ existe (sinon erreur claire au lieu de crash 500)
+if (!file_exists(__DIR__ . '/vendor/autoload.php')) {
+    header("Content-Type: application/json; charset=UTF-8");
+    http_response_code(500);
+    echo json_encode([
+        "success" => false,
+        "error" => "ERREUR: Le dossier vendor/ est manquant. Uploadez le dossier vendor/ dans le même dossier que send_mail.php"
+    ]);
+    exit();
+}
 require __DIR__ . '/vendor/autoload.php';
 
 use PHPMailer\PHPMailer\PHPMailer;
