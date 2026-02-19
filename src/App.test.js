@@ -1,8 +1,6 @@
-import { render, screen } from '@testing-library/react';
-import App from './App';
+import { maskRechargeCode } from "./utils/rechargeHistory";
 
-test('renders learn react link', () => {
-  render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+test("masque les codes en conservant les 4 derniers caracteres", () => {
+  expect(maskRechargeCode("ABCDE-12345")).toBe("*****-*2345");
+  expect(maskRechargeCode("1234")).toBe("1234");
 });

@@ -1,358 +1,320 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Layout,
-  Typography,
+  Alert,
   Button,
-  Space,
   Card,
-  Divider,
+  Col,
+  Empty,
+  Input,
+  List,
+  Popconfirm,
+  Row,
+  Select,
+  Space,
+  Statistic,
+  Tag,
+  Typography,
   message,
 } from "antd";
 import {
-  CreditCardOutlined,
   ArrowLeftOutlined,
-  ShopOutlined,
-  LoginOutlined,
-  InfoCircleOutlined,
-  UserOutlined,
-  LockOutlined,
-  SafetyCertificateOutlined,
-  CustomerServiceOutlined,
-  FileTextOutlined,
-  FacebookOutlined,
-  TwitterOutlined,
-  InstagramOutlined,
-  HomeOutlined,
-  GlobalOutlined,
-  WalletOutlined,
   CheckCircleOutlined,
-  CopyOutlined,
   ClockCircleOutlined,
+  CopyOutlined,
   DeleteOutlined,
+  FileSearchOutlined,
+  FilterOutlined,
+  SearchOutlined,
+  SyncOutlined,
+  WalletOutlined,
 } from "@ant-design/icons";
+import { useNavigate } from "react-router-dom";
+import PortalChrome from "../components/PortalChrome";
+import { useI18n } from "../i18n/I18nContext";
+import { readRechargeHistory, writeRechargeHistory } from "../utils/rechargeHistory";
 
-const { Header, Footer, Content } = Layout;
-const { Title, Text } = Typography;
+const { Text } = Typography;
+const { Option } = Select;
+
+const normalizeStatus = (status) => {
+  const value = String(status || "").toLowerCase();
+  if (["pending", "en attente", "in attesa", "pendiente"].includes(value)) {
+    return "pending";
+  }
+  return "verified";
+};
 
 export default function ResultsPage() {
   const [rechargeData, setRechargeData] = useState([]);
+  const [selectedType, setSelectedType] = useState("all");
+  const [selectedStatus, setSelectedStatus] = useState("all");
+  const [searchValue, setSearchValue] = useState("");
+
+  const navigate = useNavigate();
+  const { t, formatDateTime } = useI18n();
 
   useEffect(() => {
-    // Récupérez les données depuis localStorage
-    const data = JSON.parse(localStorage.getItem("rechargeData")) || [];
-    setRechargeData(data);
+    setRechargeData(readRechargeHistory());
   }, []);
 
-  const handleCopyCodes = (codes) => {
+  const getTypeLabel = useCallback((type) => {
+    const key = `recharge.types.${type}`;
+    const translated = t(key);
+    return translated === key ? type : translated;
+  }, [t]);
+
+  const formatDate = useCallback((value) => {
+    return (
+      formatDateTime(value, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }) || t("results.dateUnavailable")
+    );
+  }, [formatDateTime, t]);
+
+  const typeOptions = useMemo(() => {
+    const unique = Array.from(new Set(rechargeData.map((entry) => entry.rechargeType).filter(Boolean)));
+    return ["all", ...unique];
+  }, [rechargeData]);
+
+  const filteredData = useMemo(() => {
+    return rechargeData.filter((entry) => {
+      const matchesType = selectedType === "all" || entry.rechargeType === selectedType;
+      if (!matchesType) return false;
+
+      const statusKey = normalizeStatus(entry.status);
+      const matchesStatus = selectedStatus === "all" || statusKey === selectedStatus;
+      if (!matchesStatus) return false;
+
+      const needle = searchValue.trim().toLowerCase();
+      if (!needle) return true;
+
+      const statusLabel = t(`status.${statusKey}`).toLowerCase();
+      const haystack = [
+        entry.id,
+        getTypeLabel(entry.rechargeType),
+        entry.amount,
+        statusLabel,
+      ]
+        .map((value) => String(value || "").toLowerCase())
+        .join(" ");
+
+      return haystack.includes(needle);
+    });
+  }, [rechargeData, searchValue, selectedType, selectedStatus, t, getTypeLabel]);
+
+  const totalAmount = useMemo(() => {
+    return filteredData.reduce((sum, item) => {
+      const amount = Number(item.amount);
+      return sum + (Number.isFinite(amount) ? amount : 0);
+    }, 0);
+  }, [filteredData]);
+
+  const successRate = useMemo(() => {
+    if (filteredData.length === 0) return 0;
+    const successCount = filteredData.filter((item) => normalizeStatus(item.status) === "verified").length;
+    return Math.round((successCount / filteredData.length) * 100);
+  }, [filteredData]);
+
+  const latestEntryLabel = useMemo(() => {
+    if (filteredData.length === 0) return t("results.messages.noVerification");
+    return formatDate(filteredData[0].createdAt || filteredData[0].timestamp);
+  }, [filteredData, formatDate, t]);
+
+  const handleDelete = (index) => {
+    const entry = filteredData[index];
+    const next = rechargeData.filter((item) => item !== entry);
+    writeRechargeHistory(next);
+    setRechargeData(next);
+    message.success(t("results.messages.deleted"));
+  };
+
+  const handleClearAll = () => {
+    writeRechargeHistory([]);
+    setRechargeData([]);
+    message.success(t("results.messages.cleared"));
+  };
+
+  const handleCopyCodes = (codes = []) => {
     navigator.clipboard.writeText(codes.join("\n")).then(() => {
-      message.success("Codes copiés dans le presse-papiers !");
+      message.success(t("results.messages.copied"));
     });
   };
 
-  const handleDelete = (index) => {
-    // Supprimer l'élément à l'index spécifié
-    const updatedData = rechargeData.filter((_, i) => i !== index);
-    // Mettre à jour le localStorage
-    localStorage.setItem("rechargeData", JSON.stringify(updatedData));
-    // Mettre à jour l'état
-    setRechargeData(updatedData);
-    message.success("Enregistrement supprimé avec succès !");
-  };
-
   return (
-    <Layout className="min-h-screen font-sans bg-[#F5F7FA]">
-      <Header className="bg-white px-4 sm:px-8 md:px-16 py-3 sm:py-5 flex items-center justify-between shadow-md border-b border-gray-200">
-        <div className="flex items-center space-x-2 sm:space-x-4">
-          <span className="text-xl sm:text-2xl md:text-3xl font-extrabold bg-gradient-to-r from-[#FF3366] to-[#FF66CC] bg-clip-text text-transparent tracking-tight transition-transform duration-300 hover:scale-105 drop-shadow-lg">
-            RECHARGE
-          </span>
-          <Text className="text-gray-600 text-xs sm:text-sm md:text-base font-medium hidden sm:block">
-            Solutions de Paiement Sécurisées
-          </Text>
-        </div>
-        <Space size="small" className="flex-wrap">
-          <Button
-            type="text"
-            icon={<CreditCardOutlined className="text-[#FF3366]" />}
-            className="text-gray-700 hover:text-[#FF3366] transition-colors duration-300 font-medium text-xs sm:text-sm md:text-base flex items-center gap-1"
-          >
-            Vérifier Solde
+    <PortalChrome
+      title={t("results.title")}
+      subtitle={t("results.subtitle")}
+      actions={
+        <>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/")} className="!rounded-xl">
+            {t("results.backToVerification")}
           </Button>
-          <Button
-            type="text"
-            icon={<LoginOutlined className="text-[#FF3366]" />}
-            className="text-gray-700 hover:text-[#FF3366] transition-colors duration-300 font-medium text-xs sm:text-sm md:text-base flex items-center gap-1"
+          <Popconfirm
+            title={t("results.clearTitle")}
+            description={t("results.clearDescription")}
+            onConfirm={handleClearAll}
+            okText={t("results.clearOk")}
+            cancelText={t("results.clearCancel")}
+            disabled={rechargeData.length === 0}
           >
-            Connexion
-          </Button>
-          <Button
-            type="primary"
-            icon={<ShopOutlined />}
-            className="bg-gradient-to-r from-[#FF3366] to-[#FF66CC] border-none hover:from-[#FF66CC] hover:to-[#FF3366] transition-all duration-300 rounded-lg px-3 sm:px-4 md:px-6 font-semibold text-xs sm:text-sm flex items-center gap-1"
-          >
-            Acheter Ticket
-          </Button>
-          <Button
-            type="text"
-            icon={<InfoCircleOutlined className="text-[#FF3366]" />}
-            className="text-gray-700 hover:text-[#FF3366] transition-colors duration-300 font-medium text-xs sm:text-sm md:text-base flex items-center gap-1"
-          >
-            Découvrir
-          </Button>
-        </Space>
-      </Header>
-
-      <Content className="flex flex-col items-center justify-center px-4 sm:px-6 md:px-8 py-8 sm:py-12 md:py-24 bg-gradient-to-b from-[#F5F7FA] to-[#E8ECEF]">
-        <Card
-          className="rounded-xl shadow-xl p-4 sm:p-6 md:p-12 w-full max-w-full sm:max-w-4xl md:max-w-5xl border-t-4 border-[#FF3366] transform transition-all duration-500 hover:shadow-2xl"
-          style={{ background: "linear-gradient(145deg, #FFFFFF, #F8F9FA)" }}
-        >
-          <div className="text-center mb-6 sm:mb-10">
-            <Title
-              level={2}
-              className="text-[#1A1A2E] font-extrabold tracking-tight mb-2 text-xl sm:text-2xl md:text-3xl"
-            >
-              Historique des Vérifications
-            </Title>
-            <Text className="text-gray-600 text-sm sm:text-base flex items-center justify-center gap-2">
-              <WalletOutlined className="text-[#FF3366]" /> Détails de vos soumissions
-            </Text>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {rechargeData.length > 0 ? (
-              rechargeData.map((data, index) => (
-                <div
-                  key={index}
-                  className="border border-gray-200 rounded-lg p-4 sm:p-5 bg-white shadow-sm hover:shadow-md transition-shadow duration-300"
-                >
-                  <Text className="block text-gray-800 font-semibold flex items-center gap-2 text-sm sm:text-base">
-                    <WalletOutlined className="text-[#FF3366]" /> Type de Recharge
-                  </Text>
-                  <Text className="text-gray-600 text-sm sm:text-base">{data.rechargeType || "Non spécifié"}</Text>
-
-                  <Text className="block text-gray-800 font-semibold flex items-center gap-2 mt-3 sm:mt-4 text-sm sm:text-base">
-                    <CreditCardOutlined className="text-[#FF3366]" /> Montant (€)
-                  </Text>
-                  <Text className="text-gray-600 text-sm sm:text-base">{data.montant || "Non spécifié"}</Text>
-
-                  <Text className="block text-gray-800 font-semibold flex items-center gap-2 mt-3 sm:mt-4 text-sm sm:text-base">
-                    <CreditCardOutlined className="text-[#FF3366]" /> Codes
-                  </Text>
-                  {data.codes && data.codes.length > 0 ? (
-                    data.codes.map((code, codeIndex) => (
-                      <Text key={codeIndex} className="block text-gray-600 text-sm sm:text-base">
-                        Code {codeIndex + 1}: {code}
-                      </Text>
-                    ))
-                  ) : (
-                    <Text className="text-gray-600 text-sm sm:text-base">Aucun code soumis</Text>
-                  )}
-
-                  <Text className="block text-gray-800 font-semibold flex items-center gap-2 mt-3 sm:mt-4 text-sm sm:text-base">
-                    <ClockCircleOutlined className="text-[#FF3366]" /> Date et Heure
-                  </Text>
-                  <Text className="text-gray-600 text-sm sm:text-base">{data.timestamp || "Non spécifié"}</Text>
-
-                  <div className="flex flex-col sm:flex-row gap-2 mt-3 sm:mt-4">
-                    <Button
-                      type="link"
-                      icon={<CopyOutlined />}
-                      onClick={() => handleCopyCodes(data.codes)}
-                      className="text-[#FF3366] hover:text-[#FF66CC] transition-colors duration-300 font-medium text-sm sm:text-base flex items-center gap-1"
-                    >
-                      Copier les codes
-                    </Button>
-                    <Button
-                      type="link"
-                      icon={<DeleteOutlined />}
-                      onClick={() => handleDelete(index)}
-                      className="text-red-500 hover:text-red-700 transition-colors duration-300 font-medium text-sm sm:text-base flex items-center gap-1"
-                    >
-                      Supprimer
-                    </Button>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <Text className="text-gray-600 text-sm sm:text-base text-center col-span-2">
-                Aucune vérification enregistrée.
-              </Text>
-            )}
-          </div>
-          <div className="flex justify-center mt-6 sm:mt-10">
-            <Button
-              size="large"
-              icon={<ArrowLeftOutlined />}
-              onClick={() => window.history.back()}
-              className="border-[#FF3366] text-[#FF3366] hover:border-[#FF66CC] hover:text-[#FF66CC] transition-colors duration-300 rounded-lg font-semibold text-sm sm:text-base"
-            >
-              Retour
+            <Button danger className="!rounded-xl" disabled={rechargeData.length === 0}>
+              {t("results.clear")}
             </Button>
-          </div>
-        </Card>
-      </Content>
+          </Popconfirm>
+        </>
+      }
+      footerLabel={t("results.footerLabel")}
+      footerMeta={t("results.footerMeta")}
+    >
+      <Row gutter={[16, 16]}>
+        <Col xs={24} sm={8}>
+          <Card className="rc-kpi-card rc-lift rc-delay-1 !rounded-2xl !border-0">
+            <Statistic title={t("results.kpi.verifications")} value={filteredData.length} prefix={<FileSearchOutlined />} />
+          </Card>
+        </Col>
+        <Col xs={24} sm={8}>
+          <Card className="rc-kpi-card rc-lift rc-delay-2 !rounded-2xl !border-0">
+            <Statistic title={t("results.kpi.totalAmount")} value={totalAmount.toFixed(2)} suffix="EUR" prefix={<WalletOutlined />} />
+          </Card>
+        </Col>
+        <Col xs={24} sm={8}>
+          <Card className="rc-kpi-card rc-lift rc-delay-3 !rounded-2xl !border-0">
+            <Statistic title={t("results.kpi.complianceRate")} value={successRate} suffix="%" prefix={<CheckCircleOutlined />} />
+          </Card>
+        </Col>
+      </Row>
 
-      <Footer className="bg-[#1A1A2E] text-white py-8 sm:py-12 md:py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
-          <div className="flex flex-col sm:grid sm:grid-cols-2 md:grid-cols-5 gap-6 sm:gap-10 mb-8 sm:mb-12">
-            <div className="col-span-2">
-              <span className="text-xl sm:text-2xl md:text-3xl font-extrabold bg-gradient-to-r from-[#FF3366] to-[#FF66CC] bg-clip-text text-transparent tracking-tight transition-transform duration-300 hover:scale-105 drop-shadow-lg">
-                RECHARGE
-              </span>
-              <Text className="block text-gray-400 mt-3 sm:mt-4 mb-4 sm:mb-6 text-xs sm:text-sm">
-                Votre partenaire pour des paiements en ligne sécurisés et
-                rapides, partout dans le monde.
-              </Text>
-              <Space size="middle">
-                <a
-                  href="#"
-                  className="text-gray-400 hover:text-[#FF3366] transition-colors duration-300 text-lg sm:text-xl transform hover:scale-110"
-                >
-                  <FacebookOutlined />
-                </a>
-                <a
-                  href="#"
-                  className="text-gray-400 hover:text-[#FF3366] transition-colors duration-300 text-lg sm:text-xl transform hover:scale-110"
-                >
-                  <TwitterOutlined />
-                </a>
-                <a
-                  href="#"
-                  className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-lg sm:text-xl transform hover:scale-110"
-                >
-                  <InstagramOutlined />
-                </a>
-              </Space>
-            </div>
-            <div>
-              <h4 className="text-[#FF3366] font-semibold mb-3 sm:mb-4 text-sm sm:text-base flex items-center gap-2">
-                <ShopOutlined /> Commencer
-              </h4>
-              <ul className="space-y-2 sm:space-y-3">
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <CreditCardOutlined /> Acheter Recharge
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <UserOutlined /> Créer un compte
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <CheckCircleOutlined /> Utiliser Recharge
-                  </a>
-                </li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-[#FF3366] font-semibold mb-3 sm:mb-4 text-sm sm:text-base flex items-center gap-2">
-                <InfoCircleOutlined /> Ressources
-              </h4>
-              <ul className="space-y-2 sm:space-y-3">
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <CustomerServiceOutlined /> Support
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <CreditCardOutlined /> Remboursement
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <CheckCircleOutlined /> Activation
-                  </a>
-                </li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-[#FF3366] font-semibold mb-3 sm:mb-4 text-sm sm:text-base flex items-center gap-2">
-                <LockOutlined /> Légal
-              </h4>
-              <ul className="space-y-2 sm:space-y-3">
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <InfoCircleOutlined /> À propos de nous
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <FileTextOutlined /> Conditions générales
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <SafetyCertificateOutlined /> Confidentialité
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <LockOutlined /> Politique KYC
-                  </a>
-                </li>
-              </ul>
-            </div>
-          </div>
+      <Card className="rc-elevated-card rc-lift rc-delay-2 !rounded-2xl !border-slate-200/80">
+        <Space className="w-full !justify-between" wrap>
+          <Text className="text-slate-600 text-sm">
+            <SyncOutlined className="mr-2 text-[#ff3366]" />
+            {t("results.latestVisible", { date: latestEntryLabel })}
+          </Text>
+          <Tag color="magenta">{t("results.secureJournalTag")}</Tag>
+        </Space>
+      </Card>
 
-          <Divider className="bg-gray-700 my-6 sm:my-8" />
-          <div className="flex flex-col items-center">
-            <Space size="large" className="mb-4 sm:mb-6 flex flex-col sm:flex-row text-center">
-              <a
-                href="#"
-                className="text-gray-400 hover:text-[#FF3366] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-              >
-                <HomeOutlined /> 10 rue Vandrezanne, 75013 Paris, France
-              </a>
-              <a
-                href="#"
-                className="text-gray-400 hover:text-[#FF3366] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-              >
-                <GlobalOutlined /> www.recharge.fr
-              </a>
-            </Space>
-            <Text className="text-gray-500 text-xs text-center">
-              © 2004 - 2025 Recharge SAS. Tous droits réservés.<br />
-              Recharge SAS, enregistrée en France sous le numéro SIREN
-              478503321. Opérations Recharge en EEA et EU sous Narvi Payments
-              Oy Ab, une institution de monnaie électronique autorisée par
-              FIN-FSA.
-            </Text>
-          </div>
-        </div>
-      </Footer>
-    </Layout>
+      <Card className="rc-elevated-card rc-lift rc-delay-3 !rounded-2xl !border-slate-200/80">
+        <Row gutter={[14, 14]}>
+          <Col xs={24} md={11}>
+            <Input
+              size="large"
+              value={searchValue}
+              onChange={(event) => setSearchValue(event.target.value)}
+              prefix={<SearchOutlined />}
+              placeholder={t("results.filters.searchPlaceholder")}
+              className="!rounded-xl"
+            />
+          </Col>
+          <Col xs={24} md={7}>
+            <Select
+              value={selectedType}
+              onChange={setSelectedType}
+              size="large"
+              className="w-full"
+              suffixIcon={<FilterOutlined />}
+            >
+              {typeOptions.map((type) => (
+                <Option key={type} value={type}>
+                  {type === "all" ? t("results.filters.allTypes") : getTypeLabel(type)}
+                </Option>
+              ))}
+            </Select>
+          </Col>
+          <Col xs={24} md={6}>
+            <Select value={selectedStatus} onChange={setSelectedStatus} size="large" className="w-full">
+              <Option value="all">{t("results.filters.allStatuses")}</Option>
+              <Option value="verified">{t("results.statusFilters.verified")}</Option>
+              <Option value="pending">{t("results.statusFilters.pending")}</Option>
+            </Select>
+          </Col>
+        </Row>
+      </Card>
+
+      <Alert
+        type="success"
+        showIcon
+        message={t("results.alert.title")}
+        description={t("results.alert.description")}
+      />
+
+      <Card className="rc-elevated-card rc-lift rc-delay-4 !rounded-2xl !border-slate-200/80" title={t("results.audit.title")}>
+        {filteredData.length === 0 ? (
+          <Empty description={t("results.audit.empty")} image={Empty.PRESENTED_IMAGE_SIMPLE}>
+            <Button type="primary" onClick={() => navigate("/")} className="!rounded-xl !bg-[#ff3366] !border-[#ff3366]">
+              {t("results.audit.start")}
+            </Button>
+          </Empty>
+        ) : (
+          <List
+            className="rc-list-animate"
+            itemLayout="vertical"
+            dataSource={filteredData}
+            split={false}
+            renderItem={(item, index) => (
+              <List.Item key={`${item.id || "entry"}-${index}`} className="!px-0 !py-2">
+                <Card className="rc-log-item rc-lift !rounded-xl !border-slate-200/80" hoverable>
+                  <Space direction="vertical" size={10} className="w-full">
+                    <Row gutter={[12, 8]}>
+                      <Col xs={24} md={10}>
+                        <Text className="text-slate-500 text-xs uppercase">{t("results.audit.reference")}</Text>
+                        <Text className="block rc-mono text-slate-900">{item.id || t("common.notAvailable")}</Text>
+                      </Col>
+                      <Col xs={12} md={5}>
+                        <Text className="text-slate-500 text-xs uppercase">{t("results.audit.type")}</Text>
+                        <Text className="block text-slate-900">{getTypeLabel(item.rechargeType) || t("common.notAvailable")}</Text>
+                      </Col>
+                      <Col xs={12} md={5}>
+                        <Text className="text-slate-500 text-xs uppercase">{t("results.audit.amount")}</Text>
+                        <Text className="block text-slate-900">{item.amount || "0.00"} EUR</Text>
+                      </Col>
+                      <Col xs={24} md={4} className="md:text-right">
+                        <Tag color="success" icon={<CheckCircleOutlined />}>
+                          {t(`status.${normalizeStatus(item.status)}`)}
+                        </Tag>
+                      </Col>
+                    </Row>
+
+                    <div>
+                      <Text className="text-slate-500 text-xs uppercase">{t("results.audit.maskedCodes")}</Text>
+                      <div className="mt-2 space-y-1">
+                        {(item.codes || []).map((code, codeIndex) => (
+                          <Text key={`${item.id || index}-${codeIndex}`} className="block rc-mono text-slate-800">
+                            {code}
+                          </Text>
+                        ))}
+                      </div>
+                    </div>
+
+                    <Space className="w-full !justify-between" wrap>
+                      <Text className="text-slate-500 text-sm">
+                        <ClockCircleOutlined className="mr-1" /> {formatDate(item.createdAt || item.timestamp)}
+                      </Text>
+                      <Space>
+                        <Button type="link" icon={<CopyOutlined />} onClick={() => handleCopyCodes(item.codes)}>
+                          {t("results.audit.copy")}
+                        </Button>
+                        <Popconfirm
+                          title={t("results.audit.deleteTitle")}
+                          description={t("results.audit.deleteDescription")}
+                          onConfirm={() => handleDelete(index)}
+                          okText={t("results.audit.delete")}
+                          cancelText={t("results.clearCancel")}
+                        >
+                          <Button type="link" danger icon={<DeleteOutlined />}>
+                            {t("results.audit.delete")}
+                          </Button>
+                        </Popconfirm>
+                      </Space>
+                    </Space>
+                  </Space>
+                </Card>
+              </List.Item>
+            )}
+          />
+        )}
+      </Card>
+    </PortalChrome>
   );
 }

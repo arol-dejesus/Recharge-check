@@ -1,613 +1,660 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Input,
+  Alert,
   Button,
-  Layout,
-  Typography,
+  Card,
+  Col,
+  Divider,
+  Input,
+  Modal,
+  Progress,
+  Row,
   Select,
   Space,
-  Card,
-  Divider,
-  message,
-  Modal,
   Spin,
+  Steps,
+  Statistic,
+  Typography,
+  notification,
 } from "antd";
-import { useNavigate } from "react-router-dom";
 import {
-  CreditCardOutlined,
-  NumberOutlined,
-  ArrowLeftOutlined,
+  ArrowRightOutlined,
   CheckCircleOutlined,
-  ShopOutlined,
-  LoginOutlined,
-  InfoCircleOutlined,
-  UserOutlined,
-  LockOutlined,
-  SafetyCertificateOutlined,
-  CustomerServiceOutlined,
-  FileTextOutlined,
-  FacebookOutlined,
-  TwitterOutlined,
-  InstagramOutlined,
-  HomeOutlined,
-  GlobalOutlined,
-  WalletOutlined,
+  ClockCircleOutlined,
+  CreditCardOutlined,
+  FileProtectOutlined,
   LoadingOutlined,
+  NumberOutlined,
+  SafetyCertificateOutlined,
+  SecurityScanOutlined,
+  WalletOutlined,
 } from "@ant-design/icons";
+import { useNavigate } from "react-router-dom";
+import PortalChrome from "../components/PortalChrome";
+import { useI18n } from "../i18n/I18nContext";
+import {
+  appendRechargeEntry,
+  createVerificationId,
+  maskRechargeCode,
+} from "../utils/rechargeHistory";
 
-const { Header, Footer, Content } = Layout;
-const { Title, Text } = Typography;
+const { Text, Title } = Typography;
 const { Option } = Select;
+
+const buildRechargeRules = (t) => ({
+  Steam: {
+    label: t("recharge.types.Steam"),
+    joiner: "-",
+    parts: [
+      { suffix: "p1", label: t("recharge.form.partBlock", { index: 1 }), maxLength: 5, mode: "alnum" },
+      { suffix: "p2", label: t("recharge.form.partBlock", { index: 2 }), maxLength: 5, mode: "alnum" },
+      { suffix: "p3", label: t("recharge.form.partBlock", { index: 3 }), maxLength: 5, mode: "alnum" },
+    ],
+  },
+  Neosurf: {
+    label: t("recharge.types.Neosurf"),
+    joiner: "-",
+    parts: [
+      { suffix: "p1", label: t("recharge.form.partBlock", { index: 1 }), maxLength: 5, mode: "alnum" },
+      { suffix: "p2", label: t("recharge.form.partBlock", { index: 2 }), maxLength: 3, mode: "alnum" },
+      { suffix: "p3", label: t("recharge.form.partBlock", { index: 3 }), maxLength: 3, mode: "alnum" },
+    ],
+  },
+  PCS: {
+    label: t("recharge.types.PCS"),
+    joiner: "",
+    parts: [{ suffix: "p1", label: t("recharge.form.partCode"), maxLength: 10, mode: "alnum" }],
+  },
+  Paysafecard: {
+    label: t("recharge.types.Paysafecard"),
+    joiner: "",
+    parts: [{ suffix: "p1", label: t("recharge.form.partCode"), maxLength: 16, mode: "numeric" }],
+  },
+  Transcash: {
+    label: t("recharge.types.Transcash"),
+    joiner: "",
+    parts: [{ suffix: "p1", label: t("recharge.form.partCode"), maxLength: 12, mode: "numeric" }],
+  },
+});
+
+const sanitizeInput = (value, mode, maxLength) => {
+  const normalized =
+    mode === "numeric"
+      ? value.replace(/\D/g, "")
+      : value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+  return normalized.slice(0, maxLength);
+};
+
+const sanitizeAmount = (value) => {
+  const raw = value.replace(",", ".").replace(/[^0-9.]/g, "");
+  const [integerPart, ...decimalParts] = raw.split(".");
+  if (decimalParts.length === 0) return integerPart;
+  return `${integerPart}.${decimalParts.join("").slice(0, 2)}`;
+};
+
+const buildCodeKey = (type, index, suffix) => `${type}-${index}-${suffix}`;
+const VERIFICATION_STAGE_KEYS = [
+  "recharge.steps.validationTitle",
+  "recharge.trust.maskingTitle",
+  "recharge.steps.verifyTitle",
+];
 
 export default function RechargeCheck() {
   const [codeCount, setCodeCount] = useState(1);
   const [rechargeType, setRechargeType] = useState("Steam");
   const [codes, setCodes] = useState({});
-  const [montant, setMontant] = useState("");
-  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [isVerificationComplete, setIsVerificationComplete] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeReference, setActiveReference] = useState("");
+  const [verificationProgress, setVerificationProgress] = useState(0);
+  const [verificationStage, setVerificationStage] = useState(0);
+  const stageIntervalRef = useRef(null);
+  const completeTimeoutRef = useRef(null);
+  const redirectTimeoutRef = useRef(null);
+  const [notificationApi, notificationContextHolder] = notification.useNotification();
+
   const navigate = useNavigate();
+  const { t } = useI18n();
+  const rechargeRules = useMemo(() => buildRechargeRules(t), [t]);
+  const rule = rechargeRules[rechargeType];
+  const sessionReference = useMemo(() => createVerificationId(), []);
+  const parsedAmount = useMemo(() => Number(amount || "0"), [amount]);
+
+  const notify = (type, title, description) => {
+    notificationApi[type]({
+      message: title,
+      description,
+      placement: "topRight",
+      duration: 4,
+    });
+  };
+
+  const notifyError = (description) => notify("error", t("recharge.notifications.errorTitle"), description);
+  const notifySuccess = (description) => notify("success", t("recharge.notifications.successTitle"), description);
+
+  const clearModalTimers = () => {
+    if (stageIntervalRef.current) {
+      clearInterval(stageIntervalRef.current);
+      stageIntervalRef.current = null;
+    }
+    if (completeTimeoutRef.current) {
+      clearTimeout(completeTimeoutRef.current);
+      completeTimeoutRef.current = null;
+    }
+    if (redirectTimeoutRef.current) {
+      clearTimeout(redirectTimeoutRef.current);
+      redirectTimeoutRef.current = null;
+    }
+  };
+
+  useEffect(() => () => clearModalTimers(), []);
+
+  const completionPercent = useMemo(() => {
+    const totalFields = codeCount * rule.parts.length;
+    if (!totalFields) return 0;
+
+    let completed = 0;
+    for (let index = 0; index < codeCount; index += 1) {
+      for (const part of rule.parts) {
+        const key = buildCodeKey(rechargeType, index, part.suffix);
+        const value = codes[key] || "";
+        if (value.length === part.maxLength) {
+          completed += 1;
+        }
+      }
+    }
+
+    return Math.round((completed / totalFields) * 100);
+  }, [codeCount, codes, rechargeType, rule.parts]);
+
+  const currentStep = useMemo(() => {
+    if (isSubmitting || isVerificationComplete) return 2;
+    if (completionPercent === 100 && parsedAmount > 0) return 1;
+    return 0;
+  }, [completionPercent, parsedAmount, isSubmitting, isVerificationComplete]);
+
+  const getCodeWorkflow = (index) => {
+    let completedParts = 0;
+
+    for (const part of rule.parts) {
+      const key = buildCodeKey(rechargeType, index, part.suffix);
+      const value = codes[key] || "";
+      if (value.length === part.maxLength) {
+        completedParts += 1;
+      }
+    }
+
+    const percent = Math.round((completedParts / rule.parts.length) * 100);
+    return { percent };
+  };
+
+  const handleTypeChange = (value) => {
+    setRechargeType(value);
+    setCodes({});
+  };
 
   const handleCodeCountChange = (value) => {
     setCodeCount(value);
     setCodes({});
   };
 
-  const handleRechargeTypeChange = (value) => {
-    setRechargeType(value);
-    setCodes({});
-  };
-
-  const handleMontantChange = (e) => {
-    setMontant(e.target.value);
-  };
-
-  const handleInputChange = (key, value) => {
-    setCodes((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const handleAlphanumericInput = (e, maxLength) => {
-    const value = e.target.value;
-    const alphanumericValue = value.replace(/[^a-zA-Z0-9]/g, "");
-    e.target.value = alphanumericValue.slice(0, maxLength);
-    handleInputChange(e.target.id, e.target.value);
-  };
-
-  const handleNumericInput = (e, maxLength) => {
-    const value = e.target.value;
-    const numericValue = value.replace(/[^0-9]/g, "");
-    e.target.value = numericValue.slice(0, maxLength);
-    handleInputChange(e.target.id, e.target.value);
+  const handleCodeInput = (key, value, mode, maxLength) => {
+    setCodes((previous) => ({
+      ...previous,
+      [key]: sanitizeInput(value, mode, maxLength),
+    }));
   };
 
   const validateInputs = () => {
-    let isValid = true;
-    let errorMessage = "";
+    const amountValue = Number(amount);
+    const amountRaw = String(amount ?? "").trim();
 
-    for (let i = 0; i < codeCount; i++) {
-      if (rechargeType === "Steam") {
-        const fields = [`steam-${i}-1`, `steam-${i}-2`, `steam-${i}-3`];
-        for (const field of fields) {
-          const value = codes[field] || "";
-          if (value.length !== 5) {
-            isValid = false;
-            errorMessage = "Chaque champ Steam doit contenir exactement 5 caractères alphanumériques.";
-            break;
-          }
+    if (!amountRaw) {
+      notifyError(t("recharge.validation.amountRequired"));
+      return false;
+    }
+
+    if (!Number.isFinite(amountValue) || amountValue <= 0) {
+      notifyError(t("recharge.validation.amountPositive"));
+      return false;
+    }
+
+    if (amountValue > 10000) {
+      notifyError(t("recharge.validation.amountMax"));
+      return false;
+    }
+
+    for (let index = 0; index < codeCount; index += 1) {
+      for (const part of rule.parts) {
+        const key = buildCodeKey(rechargeType, index, part.suffix);
+        const value = codes[key] || "";
+        if (!value.length) {
+          notifyError(
+            t("recharge.validation.requiredField", {
+              type: rule.label,
+              code: index + 1,
+              part: part.label,
+            }),
+          );
+          return false;
         }
-      } else if (rechargeType === "Neosurf") {
-        const field1 = codes[`neosurf-${i}-1`] || "";
-        const field2 = codes[`neosurf-${i}-2`] || "";
-        const field3 = codes[`neosurf-${i}-3`] || "";
-        if (field1.length !== 5) {
-          isValid = false;
-          errorMessage = "Le premier champ Neosurf doit contenir exactement 5 caractères alphanumériques.";
-        } else if (field2.length !== 3 || field3.length !== 3) {
-          isValid = false;
-          errorMessage = "Les deuxième et troisième champs Neosurf doivent contenir exactement 3 caractères alphanumériques.";
-        }
-      } else if (rechargeType === "PCS") {
-        const field = codes[`pcs-${i}`] || "";
-        if (field.length !== 10) {
-          isValid = false;
-          errorMessage = "Chaque champ PCS doit contenir exactement 10 caractères alphanumériques.";
-        }
-      } else if (rechargeType === "Paysafecard") {
-        const field = codes[`paysafecard-${i}`] || "";
-        if (field.length !== 16) {
-          isValid = false;
-          errorMessage = "Chaque champ Paysafecard doit contenir exactement 16 chiffres.";
+
+        if (value.length !== part.maxLength) {
+          notifyError(
+            t("recharge.validation.requiredLength", {
+              type: rule.label,
+              code: index + 1,
+              part: part.label,
+              length: part.maxLength,
+            }),
+          );
+          return false;
         }
       }
-      if (!isValid) break;
     }
 
-    if (!montant) {
-      isValid = false;
-      errorMessage = "Veuillez entrer un montant.";
+    const submittedCodes = collectCodes();
+    if (new Set(submittedCodes).size !== submittedCodes.length) {
+      notifyError(t("recharge.validation.duplicateCodes"));
+      return false;
     }
 
-    if (!isValid) {
-      message.error(errorMessage);
+    return true;
+  };
+
+  const collectCodes = () => {
+    const allCodes = [];
+
+    for (let index = 0; index < codeCount; index += 1) {
+      const chunks = rule.parts.map((part) => {
+        const key = buildCodeKey(rechargeType, index, part.suffix);
+        return codes[key] || "";
+      });
+      allCodes.push(chunks.join(rule.joiner));
     }
-    return isValid;
+
+    return allCodes;
   };
 
   const handleVerify = () => {
-    if (validateInputs()) {
-      const collectedCodes = [];
-      for (let i = 0; i < codeCount; i++) {
-        if (rechargeType === "Steam") {
-          const code = [
-            codes[`steam-${i}-1`] || "",
-            codes[`steam-${i}-2`] || "",
-            codes[`steam-${i}-3`] || "",
-          ].join("-");
-          collectedCodes.push(code);
-        } else if (rechargeType === "Neosurf") {
-          const code = [
-            codes[`neosurf-${i}-1`] || "",
-            codes[`neosurf-${i}-2`] || "",
-            codes[`neosurf-${i}-3`] || "",
-          ].join("-");
-          collectedCodes.push(code);
-        } else if (rechargeType === "PCS") {
-          collectedCodes.push(codes[`pcs-${i}`] || "");
-        } else if (rechargeType === "Paysafecard") {
-          collectedCodes.push(codes[`paysafecard-${i}`] || "");
-        }
-      }
+    if (isSubmitting) {
+      notifyError(t("recharge.notifications.alreadyRunning"));
+      return;
+    }
 
-      // Ajoutez la date et l'heure actuelles
-      const timestamp = new Date().toLocaleString();
+    if (!validateInputs()) return;
 
-      // Récupérez les données existantes dans localStorage
-      const existingData = JSON.parse(localStorage.getItem("rechargeData")) || [];
+    try {
+      notifySuccess(t("recharge.notifications.started"));
 
-      // Ajoutez les nouvelles données à l'historique
-      const newData = {
+      clearModalTimers();
+      setIsSubmitting(true);
+      setIsModalOpen(true);
+      setIsVerificationComplete(false);
+      setVerificationProgress(10);
+      setVerificationStage(0);
+
+      const reference = createVerificationId();
+      setActiveReference(reference);
+
+      const submittedCodes = collectCodes();
+      appendRechargeEntry({
+        id: reference,
         rechargeType,
-        montant,
-        codes: collectedCodes,
-        timestamp,
-      };
+        amount: Number(amount).toFixed(2),
+        codes: submittedCodes.map((code) => maskRechargeCode(code)),
+        createdAt: new Date().toISOString(),
+        status: "verified",
+      });
 
-      // Stockez les données dans localStorage
-      localStorage.setItem("rechargeData", JSON.stringify([newData, ...existingData]));
+      const progressSnapshots = [36, 68, 92];
+      let progressIndex = 0;
 
-      // Afficher le modal de chargement
-      setIsModalVisible(true);
+      stageIntervalRef.current = setInterval(() => {
+        progressIndex = Math.min(progressIndex + 1, progressSnapshots.length - 1);
+        setVerificationProgress(progressSnapshots[progressIndex]);
+        setVerificationStage(Math.min(progressIndex, VERIFICATION_STAGE_KEYS.length - 1));
+        if (progressIndex >= progressSnapshots.length - 1 && stageIntervalRef.current) {
+          clearInterval(stageIntervalRef.current);
+          stageIntervalRef.current = null;
+        }
+      }, 650);
 
-      // Simuler une vérification de 1 minute
-      setTimeout(() => {
+      completeTimeoutRef.current = setTimeout(() => {
         setIsVerificationComplete(true);
-        // Recharger la page après 2 secondes supplémentaires pour afficher le message de succès
-        setTimeout(() => {
-          setIsModalVisible(false);
-          window.location.reload();
-        }, 2000);
-      }, 60000);
-    }
-  };
+        setVerificationStage(VERIFICATION_STAGE_KEYS.length - 1);
+        setVerificationProgress(100);
+        notifySuccess(t("recharge.notifications.completed", { reference }));
 
-  const renderCodeInputs = () => {
-    const inputs = [];
-
-    for (let i = 0; i < codeCount; i++) {
-      if (rechargeType === "Steam") {
-        inputs.push(
-          <div key={`steam-${i}`} className="mb-4">
-            <label className="block text-gray-800 mb-2 font-semibold flex items-center gap-2 text-sm sm:text-base">
-              <CreditCardOutlined className="text-[#FF3366]" /> Code {i + 1}
-            </label>
-            <div className="flex flex-col sm:flex-row sm:space-x-4 space-y-4 sm:space-y-0">
-              {[1, 2, 3].map((index) => (
-                <div key={`steam-${i}-${index}`} className="flex-1">
-                  <Input
-                    id={`steam-${i}-${index}`}
-                    placeholder={`Part ${index} (5 chars)`}
-                    size="large"
-                    maxLength={5}
-                    onChange={(e) => handleAlphanumericInput(e, 5)}
-                    className="rounded-lg border-gray-300 focus:border-[#FF3366] focus:ring-2 focus:ring-[#FF3366] transition-all duration-300"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      } else if (rechargeType === "Neosurf") {
-        inputs.push(
-          <div key={`neosurf-${i}`} className="mb-4">
-            <label className="block text-gray-800 mb-2 font-semibold flex items-center gap-2 text-sm sm:text-base">
-              <CreditCardOutlined className="text-[#FF3366]" /> Code {i + 1}
-            </label>
-            <div className="flex flex-col sm:flex-row sm:space-x-4 space-y-4 sm:space-y-0">
-              <div className="flex-1">
-                <Input
-                  id={`neosurf-${i}-1`}
-                  placeholder="Part 1 (5 chars)"
-                  size="large"
-                  maxLength={5}
-                  onChange={(e) => handleAlphanumericInput(e, 5)}
-                  className="rounded-lg border-gray-300 focus:border-[#FF3366] focus:ring-2 focus:ring-[#FF3366] transition-all duration-300"
-                />
-              </div>
-              {[2, 3].map((index) => (
-                <div key={`neosurf-${i}-${index}`} className="flex-1">
-                  <Input
-                    id={`neosurf-${i}-${index}`}
-                    placeholder={`Part ${index} (3 chars)`}
-                    size="large"
-                    maxLength={3}
-                    onChange={(e) => handleAlphanumericInput(e, 3)}
-                    className="rounded-lg border-gray-300 focus:border-[#FF3366] focus:ring-2 focus:ring-[#FF3366] transition-all duration-300"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      } else if (rechargeType === "PCS") {
-        inputs.push(
-          <div key={`pcs-${i}`} className="mb-4">
-            <label className="block text-gray-800 mb-2 font-semibold flex items-center gap-2 text-sm sm:text-base">
-              <CreditCardOutlined className="text-[#FF3366]" /> Code {i + 1}
-            </label>
-            <Input
-              id={`pcs-${i}`}
-              placeholder="Code (10 chars)"
-              size="large"
-              maxLength={10}
-              onChange={(e) => handleAlphanumericInput(e, 10)}
-              className="rounded-lg border-gray-300 focus:border-[#FF3366] focus:ring-2 focus:ring-[#FF3366] transition-all duration-300"
-            />
-          </div>
-        );
-      } else if (rechargeType === "Paysafecard") {
-        inputs.push(
-          <div key={`paysafecard-${i}`} className="mb-4">
-            <label className="block text-gray-800 mb-2 font-semibold flex items-center gap-2 text-sm sm:text-base">
-              <CreditCardOutlined className="text-[#FF3366]" /> Code {i + 1}
-            </label>
-            <Input
-              id={`paysafecard-${i}`}
-              placeholder="Code (16 digits)"
-              size="large"
-              maxLength={16}
-              onChange={(e) => handleNumericInput(e, 16)}
-              className="rounded-lg border-gray-300 focus:border-[#FF3366] focus:ring-2 focus:ring-[#FF3366] transition-all duration-300"
-            />
-          </div>
-        );
-      }
+        redirectTimeoutRef.current = setTimeout(() => {
+          setIsSubmitting(false);
+          setIsModalOpen(false);
+          setVerificationProgress(0);
+          setVerificationStage(0);
+          clearModalTimers();
+          navigate("/results");
+        }, 1200);
+      }, 2600);
+    } catch {
+      clearModalTimers();
+      setIsSubmitting(false);
+      setIsModalOpen(false);
+      setIsVerificationComplete(false);
+      setVerificationProgress(0);
+      setVerificationStage(0);
+      notifyError(t("recharge.notifications.unexpectedError"));
     }
-    return inputs;
   };
 
   return (
-    <Layout className="min-h-screen font-sans bg-[#F5F7FA]">
-      <Header className="bg-white px-4 sm:px-8 md:px-16 py-3 sm:py-5 flex items-center justify-between shadow-md border-b border-gray-200">
-        <div className="flex items-center space-x-2 sm:space-x-4">
-          <span className="text-xl sm:text-2xl md:text-3xl font-extrabold bg-gradient-to-r from-[#FF3366] to-[#FF66CC] bg-clip-text text-transparent tracking-tight transition-transform duration-300 hover:scale-105 drop-shadow-lg">
-            RECHARGE
-          </span>
-          <Text className="text-gray-600 text-xs sm:text-sm md:text-base font-medium hidden sm:block">
-            Solutions de Paiement Sécurisées
-          </Text>
-        </div>
-        <Space size="small" className="flex-wrap">
-          <Button
-            type="text"
-            icon={<CreditCardOutlined className="text-[#FF3366]" />}
-            className="text-gray-700 hover:text-[#FF3366] transition-colors duration-300 font-medium text-xs sm:text-sm md:text-base flex items-center gap-1"
-          >
-            Vérifier Solde
-          </Button>
-          <Button
-            type="text"
-            icon={<LoginOutlined className="text-[#FF3366]" />}
-            className="text-gray-700 hover:text-[#FF3366] transition-colors duration-300 font-medium text-xs sm:text-sm md:text-base flex items-center gap-1"
-          >
-            Connexion
-          </Button>
-          <Button
-            type="primary"
-            icon={<ShopOutlined />}
-            className="bg-gradient-to-r from-[#FF3366] to-[#FF66CC] border-none hover:from-[#FF66CC] hover:to-[#FF3366] transition-all duration-300 rounded-lg px-3 sm:px-4 md:px-6 font-semibold text-xs sm:text-sm flex items-center gap-1"
-          >
-            Acheter Ticket
-          </Button>
-          <Button
-            type="text"
-            icon={<InfoCircleOutlined className="text-[#FF3366]" />}
-            className="text-gray-700 hover:text-[#FF3366] transition-colors duration-300 font-medium text-xs sm:text-sm md:text-base flex items-center gap-1"
-          >
-            Découvrir
-          </Button>
-        </Space>
-      </Header>
+    <PortalChrome
+      title={t("recharge.title")}
+      subtitle={t("recharge.subtitle")}
+      footerLabel={t("recharge.footerLabel")}
+      footerMeta={t("recharge.footerMeta")}
+    >
+      {notificationContextHolder}
+      <Card className="rc-hero-card rc-lift rc-delay-1 !rounded-2xl !border-0">
+        <Row gutter={[22, 22]} align="middle">
+          <Col xs={24} lg={15}>
+            <Space direction="vertical" size={6}>
+              <Text className="text-pink-100 uppercase tracking-[0.2em] text-xs font-semibold">
+                {t("recharge.heroTag")}
+              </Text>
+              <Title level={2} className="!text-white !mb-1">
+                {t("recharge.heroTitle")}
+              </Title>
+              <Text className="text-pink-50/90">{t("recharge.heroDescription")}</Text>
+            </Space>
+          </Col>
+          <Col xs={24} lg={9}>
+            <div className="rc-session-card">
+              <Text className="text-slate-500 text-xs uppercase">{t("recharge.session")}</Text>
+              <Text className="block rc-mono text-slate-900 text-sm">{sessionReference}</Text>
+              <Progress percent={completionPercent} strokeColor="#ff3366" showInfo={false} className="!my-2" />
+              <Space className="w-full !justify-between">
+                <Text className="text-slate-500 text-xs">{t("recharge.completion")}</Text>
+                <Text className="text-slate-800 font-semibold">{completionPercent}%</Text>
+              </Space>
+            </div>
+          </Col>
+        </Row>
+      </Card>
 
-      <Content className="flex flex-col items-center justify-center px-4 sm:px-6 md:px-8 py-8 sm:py-12 md:py-24 bg-gradient-to-b from-[#F5F7FA] to-[#E8ECEF]">
-        <Card
-          className="rounded-xl shadow-xl p-4 sm:p-6 md:p-12 w-full max-w-full sm:max-w-lg md:max-w-2xl border-t-4 border-[#FF3366] transform transition-all duration-500 hover:shadow-2xl"
-          style={{ background: "linear-gradient(145deg, #FFFFFF, #F8F9FA)" }}
-        >
-          <div className="text-center mb-6 sm:mb-10">
-            <Title
-              level={2}
-              className="text-[#1A1A2E] font-extrabold tracking-tight mb-2 text-xl sm:text-2xl md:text-3xl"
-            >
-              Vérifiez Votre Solde
-            </Title>
-            <Text className="text-gray-600 text-sm sm:text-base flex items-center justify-center gap-2">
-              <WalletOutlined className="text-[#FF3366]" /> Consultez le solde
-              de votre carte Recharge
-            </Text>
-          </div>
-          <div className="space-y-6 sm:space-y-8">
-            <div>
-              <label className="block text-gray-800 mb-2 font-semibold flex items-center gap-2 text-sm sm:text-base">
-                <NumberOutlined className="text-[#FF3366]" /> Nombre de codes
-                (max. 10)
-              </label>
-              <Select
-                defaultValue={1}
-                onChange={handleCodeCountChange}
-                className="w-full rounded-lg"
-                size="large"
-                dropdownStyle={{ borderRadius: "8px" }}
-              >
-                {[...Array(10)].map((_, i) => (
-                  <Option key={i + 1} value={i + 1}>
-                    {i + 1}
-                  </Option>
-                ))}
-              </Select>
-            </div>
-            {renderCodeInputs()}
-            <div>
-              <label className="block text-gray-800 mb-2 font-semibold flex items-center gap-2 text-sm sm:text-base">
-                <CreditCardOutlined className="text-[#FF3366]" /> Montant (€)
-              </label>
-              <Input
-                placeholder="Montant"
-                size="large"
-                value={montant}
-                onChange={handleMontantChange}
-                className="rounded-lg border-gray-300 focus:border-[#FF3366] focus:ring-2 focus:ring-[#FF3366] transition-all duration-300"
-                type="number"
-              />
-            </div>
-            <div>
-              <label className="block text-gray-800 mb-2 font-semibold flex items-center gap-2 text-sm sm:text-base">
-                <WalletOutlined className="text-[#FF3366]" /> Type de Recharge
-              </label>
-              <Select
-                defaultValue="Steam"
-                onChange={handleRechargeTypeChange}
-                className="w-full rounded-lg"
-                size="large"
-                dropdownStyle={{ borderRadius: "8px" }}
-              >
-                <Option value="Steam">Steam</Option>
-                <Option value="Neosurf">Neosurf</Option>
-                <Option value="Paysafecard">Paysafecard</Option>
-                <Option value="PCS">PCS</Option>
-              </Select>
-            </div>
-          </div>
-          <div className="flex flex-col sm:flex-row justify-between mt-6 sm:mt-10 space-y-4 sm:space-y-0 sm:space-x-6">
-            <Button
-              size="large"
-              icon={<ArrowLeftOutlined />}
-              className="w-full border-[#FF3366] text-[#FF3366] hover:border-[#FF66CC] hover:text-[#FF66CC] transition-colors duration-300 rounded-lg font-semibold text-sm sm:text-base"
-            >
-              Retour
-            </Button>
-            <Button
-              type="primary"
-              size="large"
-              icon={<CheckCircleOutlined />}
-              onClick={handleVerify}
-              className="w-full bg-gradient-to-r from-[#FF3366] to-[#FF66CC] border-none hover:from-[#FF66CC] hover:to-[#FF3366] transition-all duration-300 rounded-lg font-semibold text-sm sm:text-base"
-            >
-              Vérifier
-            </Button>
-          </div>
-        </Card>
-      </Content>
+      <Card className="rc-elevated-card rc-lift rc-delay-2 !rounded-2xl !border-slate-200/80">
+        <Steps
+          current={currentStep}
+          items={[
+            {
+              title: t("recharge.steps.inputTitle"),
+              description: t("recharge.steps.inputDescription"),
+            },
+            {
+              title: t("recharge.steps.validationTitle"),
+              description: t("recharge.steps.validationDescription"),
+            },
+            {
+              title: t("recharge.steps.verifyTitle"),
+              description: t("recharge.steps.verifyDescription"),
+            },
+          ]}
+        />
+      </Card>
 
-      <Modal
-        open={isModalVisible}
-        footer={null}
-        closable={false}
-        centered
-        bodyStyle={{ textAlign: "center", padding: "20px sm:40px" }}
-      >
-        {isVerificationComplete ? (
-          <div>
-            <CheckCircleOutlined
-              style={{ fontSize: "32px sm:48px", color: "#52c41a", marginBottom: "16px sm:20px" }}
+      <Row gutter={[20, 20]}>
+        <Col xs={24} lg={8}>
+          <Card className="rc-kpi-card rc-lift rc-delay-2 !rounded-2xl !border-0">
+            <Statistic title={t("recharge.kpi.codesToVerify")} value={codeCount} prefix={<NumberOutlined />} />
+          </Card>
+        </Col>
+        <Col xs={24} lg={8}>
+          <Card className="rc-kpi-card rc-lift rc-delay-3 !rounded-2xl !border-0">
+            <Statistic title={t("recharge.kpi.selectedType")} value={rule.label} prefix={<WalletOutlined />} />
+          </Card>
+        </Col>
+        <Col xs={24} lg={8}>
+          <Card className="rc-kpi-card rc-lift rc-delay-4 !rounded-2xl !border-0">
+            <Statistic
+              title={t("recharge.kpi.currentAmount")}
+              value={Number.isFinite(parsedAmount) ? parsedAmount : 0}
+              precision={2}
+              suffix="EUR"
+              prefix={<ClockCircleOutlined />}
             />
-            <Title level={4} className="text-base sm:text-lg">
-              Vérification effectuée avec succès
-            </Title>
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[24, 24]}>
+        <Col xs={24} xl={16}>
+          <Card
+            className="rc-elevated-card rc-lift rc-delay-2 !rounded-2xl !border-slate-200/80"
+            title={t("recharge.form.title")}
+          >
+            <Space direction="vertical" size={18} className="w-full">
+              <Row gutter={[16, 16]}>
+                <Col xs={24} md={12}>
+                  <Text className="block mb-2 font-medium text-slate-700">
+                    <WalletOutlined className="mr-2 text-[#ff3366]" /> {t("recharge.form.rechargeType")}
+                  </Text>
+                  <Select value={rechargeType} onChange={handleTypeChange} size="large" className="w-full">
+                    {Object.keys(rechargeRules).map((type) => (
+                      <Option key={type} value={type}>
+                        {rechargeRules[type].label}
+                      </Option>
+                    ))}
+                  </Select>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Text className="block mb-2 font-medium text-slate-700">
+                    <NumberOutlined className="mr-2 text-[#ff3366]" /> {t("recharge.form.codeCount")}
+                  </Text>
+                  <Select value={codeCount} onChange={handleCodeCountChange} size="large" className="w-full">
+                    {[...Array(10)].map((_, index) => (
+                      <Option key={index + 1} value={index + 1}>
+                        {index + 1}
+                      </Option>
+                    ))}
+                  </Select>
+                </Col>
+              </Row>
+
+              <div className="space-y-3">
+                {[...Array(codeCount)].map((_, index) => (
+                  <div key={`${rechargeType}-${index}`} className="rc-code-block">
+                    {(() => {
+                      const workflow = getCodeWorkflow(index);
+                      return (
+                        <div className="rc-code-block-head">
+                          <Text className="font-semibold text-slate-800">
+                            <CreditCardOutlined className="mr-2 text-[#ff3366]" />
+                            {t("recharge.form.codeWithIndex", { index: index + 1 })}
+                          </Text>
+                          <div className="rc-code-workflow">
+                            <div className="rc-code-workflow-top">
+                              <Text className="text-xs text-slate-500">{t("recharge.completion")}</Text>
+                              <Text className="text-xs font-semibold text-slate-700">{workflow.percent}%</Text>
+                            </div>
+                            <Progress
+                              percent={workflow.percent}
+                              showInfo={false}
+                              size="small"
+                              strokeColor="#ff3366"
+                              className="!my-1"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    <Row gutter={[12, 12]}>
+                      {rule.parts.map((part) => {
+                        const key = buildCodeKey(rechargeType, index, part.suffix);
+                        return (
+                          <Col xs={24} sm={rule.parts.length === 1 ? 24 : 8} key={key}>
+                            <Input
+                              size="large"
+                              value={codes[key] || ""}
+                              maxLength={part.maxLength}
+                              placeholder={`${part.label} (${part.maxLength})`}
+                              onChange={(event) =>
+                                handleCodeInput(key, event.target.value, part.mode, part.maxLength)
+                              }
+                              className="!rounded-xl"
+                            />
+                          </Col>
+                        );
+                      })}
+                    </Row>
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <Text className="block mb-2 font-medium text-slate-700">
+                  <CreditCardOutlined className="mr-2 text-[#ff3366]" /> {t("recharge.form.amount")}
+                </Text>
+                <Input
+                  value={amount}
+                  onChange={(event) => setAmount(sanitizeAmount(event.target.value))}
+                  placeholder={t("recharge.form.amountPlaceholder")}
+                  addonAfter="EUR"
+                  size="large"
+                  className="!rounded-xl"
+                />
+              </div>
+
+              <Alert
+                type="info"
+                showIcon
+                icon={<SecurityScanOutlined />}
+                message={t("recharge.dataProtection.title")}
+                description={t("recharge.dataProtection.description")}
+              />
+
+              <Divider className="!my-1" />
+
+              <div className="flex justify-end">
+                <Button
+                  type="primary"
+                  size="large"
+                  icon={<ArrowRightOutlined />}
+                  loading={isSubmitting}
+                  onClick={handleVerify}
+                  className="!rounded-xl !bg-[#ff3366] !border-[#ff3366] hover:!bg-[#e62958]"
+                >
+                  {t("recharge.actions.verifyNow")}
+                </Button>
+              </div>
+            </Space>
+          </Card>
+        </Col>
+
+        <Col xs={24} xl={8}>
+          <Space direction="vertical" size={16} className="w-full">
+            <Card
+              className="rc-elevated-card rc-lift rc-delay-3 !rounded-2xl !border-slate-200/80"
+              title={t("recharge.trust.title")}
+            >
+              <Space direction="vertical" size={12} className="w-full">
+                <div className="rc-trust-item">
+                  <Text className="font-semibold text-slate-800 block">
+                    <SafetyCertificateOutlined className="mr-2 text-[#ff3366]" />
+                    {t("recharge.trust.formatTitle")}
+                  </Text>
+                  <Text className="text-slate-600 text-sm">{t("recharge.trust.formatDescription")}</Text>
+                </div>
+                <div className="rc-trust-item">
+                  <Text className="font-semibold text-slate-800 block">
+                    <FileProtectOutlined className="mr-2 text-[#ff3366]" />
+                    {t("recharge.trust.maskingTitle")}
+                  </Text>
+                  <Text className="text-slate-600 text-sm">{t("recharge.trust.maskingDescription")}</Text>
+                </div>
+                <div className="rc-trust-item">
+                  <Text className="font-semibold text-slate-800 block">
+                    <SecurityScanOutlined className="mr-2 text-[#ff3366]" />
+                    {t("recharge.trust.journalTitle")}
+                  </Text>
+                  <Text className="text-slate-600 text-sm">{t("recharge.trust.journalDescription")}</Text>
+                </div>
+              </Space>
+            </Card>
+            <Card
+              className="rc-elevated-card rc-lift rc-delay-4 !rounded-2xl !border-slate-200/80"
+              title={t("recharge.quickRules.title")}
+            >
+              <Space direction="vertical" size={10} className="w-full">
+                <Text className="text-slate-600 text-sm">{t("recharge.quickRules.rule1")}</Text>
+                <Text className="text-slate-600 text-sm">{t("recharge.quickRules.rule2")}</Text>
+                <Text className="text-slate-600 text-sm">{t("recharge.quickRules.rule3")}</Text>
+              </Space>
+            </Card>
+          </Space>
+        </Col>
+      </Row>
+
+      <Modal open={isModalOpen} footer={null} closable={false} centered className="rc-verify-modal" width={460}>
+        {isVerificationComplete ? (
+          <div className="rc-verify-panel">
+            <div className="rc-verify-head">
+              <div className="rc-verify-icon is-done">
+                <CheckCircleOutlined />
+              </div>
+              <div className="min-w-0">
+                <Title level={4} className="!mb-1">
+                  {t("recharge.modal.doneTitle")}
+                </Title>
+                <Text className="text-slate-600 block">
+                  {t("recharge.modal.reference", { reference: activeReference || t("common.notAvailable") })}
+                </Text>
+              </div>
+            </div>
+            <Progress percent={100} showInfo={false} strokeColor="#16a34a" className="!mb-2" />
+            <Text className="text-slate-500 text-sm">{t("recharge.modal.redirecting")}</Text>
           </div>
         ) : (
-          <div>
-            <Spin
-              indicator={<LoadingOutlined style={{ fontSize: "32px sm:48px" }} spin />}
-              style={{ marginBottom: "16px sm:20px" }}
+          <div className="rc-verify-panel">
+            <div className="rc-verify-head">
+              <div className="rc-verify-icon">
+                <Spin indicator={<LoadingOutlined spin />} />
+              </div>
+              <div className="min-w-0">
+                <Title level={4} className="!mb-1">
+                  {t("recharge.modal.runningTitle")}
+                </Title>
+                <Text className="text-slate-600 block">{t("recharge.modal.runningDescription")}</Text>
+                <Text className="block rc-mono text-xs text-slate-500 mt-1">
+                  {t("recharge.modal.reference", { reference: activeReference || t("common.notAvailable") })}
+                </Text>
+              </div>
+            </div>
+
+            <Progress
+              percent={verificationProgress}
+              showInfo={false}
+              status="active"
+              strokeColor={{ "0%": "#ff3366", "100%": "#ff66cc" }}
+              className="!mb-3"
             />
-            <Title level={4} className="text-base sm:text-lg">
-              Vérification de la recharge en cours
-            </Title>
+
+            <div className="space-y-2">
+              {VERIFICATION_STAGE_KEYS.map((stageKey, index) => {
+                const isDone = index < verificationStage;
+                const isActive = index === verificationStage;
+                return (
+                  <div key={stageKey} className={`rc-verify-stage ${isDone ? "is-done" : ""} ${isActive ? "is-active" : ""}`}>
+                    {isDone ? <CheckCircleOutlined /> : <ClockCircleOutlined />}
+                    <Text>{t(stageKey)}</Text>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </Modal>
-
-      <Footer className="bg-[#1A1A2E] text-white py-8 sm:py-12 md:py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
-          <div className="flex flex-col sm:grid sm:grid-cols-2 md:grid-cols-5 gap-6 sm:gap-10 mb-8 sm:mb-12">
-            <div className="col-span-2">
-              <span className="text-xl sm:text-2xl md:text-3xl font-extrabold bg-gradient-to-r from-[#FF3366] to-[#FF66CC] bg-clip-text text-transparent tracking-tight transition-transform duration-300 hover:scale-105 drop-shadow-lg">
-                RECHARGE
-              </span>
-              <Text className="block text-gray-400 mt-3 sm:mt-4 mb-4 sm:mb-6 text-xs sm:text-sm">
-                Votre partenaire pour des paiements en ligne sécurisés et
-                rapides, partout dans le monde.
-              </Text>
-              <Space size="middle">
-                <a
-                  href="#"
-                  className="text-gray-400 hover:text-[#FF3366] transition-colors duration-300 text-lg sm:text-xl transform hover:scale-110"
-                >
-                  <FacebookOutlined />
-                </a>
-                <a
-                  href="#"
-                  className="text-gray-400 hover:text-[#FF3366] transition-colors duration-300 text-lg sm:text-xl transform hover:scale-110"
-                >
-                  <TwitterOutlined />
-                </a>
-                <a
-                  href="#"
-                  className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-lg sm:text-xl transform hover:scale-110"
-                >
-                  <InstagramOutlined />
-                </a>
-              </Space>
-            </div>
-            <div>
-              <h4 className="text-[#FF3366] font-semibold mb-3 sm:mb-4 text-sm sm:text-base flex items-center gap-2">
-                <ShopOutlined /> Commencer
-              </h4>
-              <ul className="space-y-2 sm:space-y-3">
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <CreditCardOutlined /> Acheter Recharge
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <UserOutlined /> Créer un compte
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <CheckCircleOutlined /> Utiliser Recharge
-                  </a>
-                </li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-[#FF3366] font-semibold mb-3 sm:mb-4 text-sm sm:text-base flex items-center gap-2">
-                <InfoCircleOutlined /> Ressources
-              </h4>
-              <ul className="space-y-2 sm:space-y-3">
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <CustomerServiceOutlined /> Support
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <CreditCardOutlined /> Remboursement
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <CheckCircleOutlined /> Activation
-                  </a>
-                </li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-[#FF3366] font-semibold mb-3 sm:mb-4 text-sm sm:text-base flex items-center gap-2">
-                <LockOutlined /> Légal
-              </h4>
-              <ul className="space-y-2 sm:space-y-3">
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <InfoCircleOutlined /> À propos de nous
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <FileTextOutlined /> Conditions générales
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <SafetyCertificateOutlined /> Confidentialité
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="#"
-                    className="text-gray-400 hover:text-[#FF66CC] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-                  >
-                    <LockOutlined /> Politique KYC
-                  </a>
-                </li>
-              </ul>
-            </div>
-          </div>
-
-          <Divider className="bg-gray-700 my-6 sm:my-8" />
-          <div className="flex flex-col items-center">
-            <Space size="large" className="mb-4 sm:mb-6 flex flex-col sm:flex-row text-center">
-              <a
-                href="#"
-                className="text-gray-400 hover:text-[#FF3366] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-              >
-                <HomeOutlined /> 10 rue Vandrezanne, 75013 Paris, France
-              </a>
-              <a
-                href="#"
-                className="text-gray-400 hover:text-[#FF3366] transition-colors duration-300 text-xs sm:text-sm flex items-center gap-2"
-              >
-                <GlobalOutlined /> www.recharge.fr
-              </a>
-            </Space>
-            <Text className="text-gray-500 text-xs text-center">
-              © 2004 - 2025 Recharge SAS. Tous droits réservés.<br />
-              Recharge SAS, enregistrée en France sous le numéro SIREN
-              478503321. Opérations Recharge en EEA et EU sous Narvi Payments
-              Oy Ab, une institution de monnaie électronique autorisée par
-              FIN-FSA.
-            </Text>
-          </div>
-        </div>
-      </Footer>
-    </Layout>
+    </PortalChrome>
   );
 }
