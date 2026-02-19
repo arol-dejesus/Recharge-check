@@ -393,7 +393,7 @@ export default function RechargeCheck() {
           clearModalTimers();
           
           // Message d'erreur simplifié
-          notifyError(`Code incorrect, veuillez réessayer à nouveau. (Essai ${currentAttempts + 1}/3)`);
+          notifyError(t("recharge.notifications.invalidCode"));
         }
       }, TOTAL_DURATION);
     } catch {
